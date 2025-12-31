@@ -59,18 +59,18 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Trigger Pusher event with each player's card
+    // Trigger Pusher event with player cards included
     const pusher = getPusher();
 
-    // Send a general game started event
     await pusher.trigger(CHANNELS.room(room.code), EVENTS.GAME_STARTED, {
       status: "playing",
       roundNumber: room.game?.roundNumber || 1,
+      playerCards, // Include all player cards so each client can get their own
     });
 
     return NextResponse.json({
       success: true,
-      playerCards, // Map of playerId -> card
+      playerCards,
       gameState: {
         status: "playing",
         calledNumbers: [],

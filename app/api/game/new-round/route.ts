@@ -61,10 +61,11 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Trigger Pusher event
+    // Trigger Pusher event with player cards
     const pusher = getPusher();
     await pusher.trigger(CHANNELS.room(room.code), EVENTS.NEW_ROUND, {
       roundNumber: newRoundNumber,
+      playerCards, // Include all player cards
     });
 
     return NextResponse.json({

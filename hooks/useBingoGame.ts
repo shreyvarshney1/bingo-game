@@ -7,23 +7,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Pusher, { Channel } from "pusher-js";
 import { BingoCard, PlayerInfo, MarkResultPayload } from "@/lib/types";
 import { EVENTS } from "@/lib/pusher-client";
-import { checkWinCondition } from "@/lib/bingo-utils";
 
 // Session storage keys
 const SESSION_ID_KEY = "teambingo_session_id";
 const ROOM_CODE_KEY = "teambingo_room_code";
 const PLAYER_ID_KEY = "teambingo_player_id";
+const ROOM_ID_KEY = "teambingo_room_id";
 
 export type GamePhase = "lobby" | "waiting" | "playing" | "finished";
-
-interface GameState {
-  status: string;
-  calledNumbers: number[];
-  currentNumber: number | null;
-  winnerId: string | null;
-  winnerName: string | null;
-  roundNumber: number;
-}
 
 interface UseBingoGameReturn {
   // Connection state
@@ -70,6 +61,7 @@ export function useBingoGame(): UseBingoGameReturn {
   const pusherRef = useRef<Pusher | null>(null);
   const channelRef = useRef<Channel | null>(null);
   const callingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isCallingRef = useRef(false); // Track if we should keep calling
 
   // Connection state
   const [isConnected, setIsConnected] = useState(false);
@@ -79,7 +71,6 @@ export function useBingoGame(): UseBingoGameReturn {
   // Player state
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [playerName, setPlayerName] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isHost, setIsHost] = useState(false);
 
   // Room state
@@ -99,6 +90,24 @@ export function useBingoGame(): UseBingoGameReturn {
   const [roundNumber, setRoundNumber] = useState(1);
   const [lastMarkResult, setLastMarkResult] =
     useState<MarkResultPayload | null>(null);
+
+  // Fetch player's card from server
+  const fetchPlayerCard = useCallback(
+    async (rId: string, pId: string) => {
+      try {
+        const res = await fetch(
+          `/api/room/state?code=${roomCode}&playerId=${pId}`
+        );
+        const data = await res.json();
+        if (data.playerCard) {
+          setCard(data.playerCard);
+        }
+      } catch (err) {
+        console.error("[Fetch Card] Error:", err);
+      }
+    },
+    [roomCode]
+  );
 
   // Initialize Pusher connection
   useEffect(() => {
@@ -133,8 +142,9 @@ export function useBingoGame(): UseBingoGameReturn {
     });
 
     return () => {
+      isCallingRef.current = false;
       if (callingIntervalRef.current) {
-        clearInterval(callingIntervalRef.current);
+        clearTimeout(callingIntervalRef.current);
       }
       if (channelRef.current) {
         channelRef.current.unbind_all();
@@ -145,74 +155,110 @@ export function useBingoGame(): UseBingoGameReturn {
   }, []);
 
   // Subscribe to room channel
-  const subscribeToRoom = useCallback((code: string) => {
-    if (!pusherRef.current) return;
+  const subscribeToRoom = useCallback(
+    (code: string, currentRoomId: string, currentPlayerId: string) => {
+      if (!pusherRef.current) return;
 
-    const channelName = `presence-room-${code.toUpperCase()}`;
+      const channelName = `presence-room-${code.toUpperCase()}`;
 
-    // Unsubscribe from previous channel if any
-    if (channelRef.current) {
-      channelRef.current.unbind_all();
-      pusherRef.current.unsubscribe(channelRef.current.name);
-    }
-
-    channelRef.current = pusherRef.current.subscribe(channelName);
-
-    // Bind to events
-    channelRef.current.bind(EVENTS.PLAYER_JOINED, (data: any) => {
-      console.log("[Pusher] Player joined:", data);
-      setPlayers((prev) => {
-        if (prev.find((p) => p.id === data.player.id)) return prev;
-        return [...prev, data.player];
-      });
-    });
-
-    channelRef.current.bind(EVENTS.PLAYER_LEFT, (data: any) => {
-      console.log("[Pusher] Player left:", data);
-      setPlayers((prev) => prev.filter((p) => p.id !== data.playerId));
-    });
-
-    channelRef.current.bind(EVENTS.GAME_STARTED, (data: any) => {
-      console.log("[Pusher] Game started:", data);
-      setPhase("playing");
-      setCalledNumbers([]);
-      setCurrentNumber(null);
-      setWinner(null);
-    });
-
-    channelRef.current.bind(EVENTS.NUMBER_CALLED, (data: any) => {
-      console.log("[Pusher] Number called:", data.number);
-      setCurrentNumber(data.number);
-      setCalledNumbers(data.calledNumbers);
-    });
-
-    channelRef.current.bind(EVENTS.WINNER_DECLARED, (data: any) => {
-      console.log("[Pusher] Winner declared:", data);
-      setWinner({ id: data.winnerId, name: data.winnerName });
-      setPhase("finished");
-      setRoundNumber(data.roundNumber);
-
-      // Stop calling if we're the host
-      if (callingIntervalRef.current) {
-        clearInterval(callingIntervalRef.current);
-        callingIntervalRef.current = null;
+      // Unsubscribe from previous channel if any
+      if (channelRef.current) {
+        channelRef.current.unbind_all();
+        pusherRef.current.unsubscribe(channelRef.current.name);
       }
-    });
 
-    channelRef.current.bind(EVENTS.NEW_ROUND, (data: any) => {
-      console.log("[Pusher] New round:", data);
-      setPhase("playing");
-      setCalledNumbers([]);
-      setCurrentNumber(null);
-      setWinner(null);
-      setRoundNumber(data.roundNumber);
-    });
+      channelRef.current = pusherRef.current.subscribe(channelName);
 
-    channelRef.current.bind(EVENTS.ROOM_UPDATE, (data: any) => {
-      console.log("[Pusher] Room update:", data);
-      if (data.players) setPlayers(data.players);
-    });
-  }, []);
+      // Bind to events
+      channelRef.current.bind(EVENTS.PLAYER_JOINED, (data: any) => {
+        console.log("[Pusher] Player joined:", data);
+        setPlayers((prev) => {
+          if (prev.find((p) => p.id === data.player.id)) return prev;
+          return [...prev, data.player];
+        });
+      });
+
+      channelRef.current.bind(EVENTS.PLAYER_LEFT, (data: any) => {
+        console.log("[Pusher] Player left:", data);
+        setPlayers((prev) => prev.filter((p) => p.id !== data.playerId));
+      });
+
+      channelRef.current.bind(EVENTS.GAME_STARTED, async (data: any) => {
+        console.log("[Pusher] Game started:", data);
+        setPhase("playing");
+        setCalledNumbers([]);
+        setCurrentNumber(null);
+        setWinner(null);
+
+        // Non-host players need to fetch their card
+        // Get card from the event data or fetch it
+        if (data.playerCards && data.playerCards[currentPlayerId]) {
+          setCard(data.playerCards[currentPlayerId]);
+        } else {
+          // Fetch card from server
+          try {
+            const res = await fetch(
+              `/api/room/state?code=${code}&playerId=${currentPlayerId}`
+            );
+            const stateData = await res.json();
+            if (stateData.playerCard) {
+              setCard(stateData.playerCard);
+            }
+          } catch (err) {
+            console.error("[Fetch Card] Error:", err);
+          }
+        }
+      });
+
+      channelRef.current.bind(EVENTS.NUMBER_CALLED, (data: any) => {
+        console.log("[Pusher] Number called:", data.number);
+        setCurrentNumber(data.number);
+        setCalledNumbers(data.calledNumbers);
+      });
+
+      channelRef.current.bind(EVENTS.WINNER_DECLARED, (data: any) => {
+        console.log("[Pusher] Winner declared:", data);
+        setWinner({ id: data.winnerId, name: data.winnerName });
+        setPhase("finished");
+        setRoundNumber(data.roundNumber);
+
+        // Stop calling
+        isCallingRef.current = false;
+        if (callingIntervalRef.current) {
+          clearTimeout(callingIntervalRef.current);
+          callingIntervalRef.current = null;
+        }
+      });
+
+      channelRef.current.bind(EVENTS.NEW_ROUND, async (data: any) => {
+        console.log("[Pusher] New round:", data);
+        setPhase("playing");
+        setCalledNumbers([]);
+        setCurrentNumber(null);
+        setWinner(null);
+        setRoundNumber(data.roundNumber);
+
+        // Fetch new card
+        try {
+          const res = await fetch(
+            `/api/room/state?code=${code}&playerId=${currentPlayerId}`
+          );
+          const stateData = await res.json();
+          if (stateData.playerCard) {
+            setCard(stateData.playerCard);
+          }
+        } catch (err) {
+          console.error("[Fetch Card] Error:", err);
+        }
+      });
+
+      channelRef.current.bind(EVENTS.ROOM_UPDATE, (data: any) => {
+        console.log("[Pusher] Room update:", data);
+        if (data.players) setPlayers(data.players);
+      });
+    },
+    []
+  );
 
   // ================== Actions ==================
 
@@ -236,7 +282,6 @@ export function useBingoGame(): UseBingoGameReturn {
 
         setPlayerId(data.playerId);
         setPlayerName(name);
-        setSessionId(data.sessionId);
         setRoomId(data.roomId);
         setRoomCode(data.roomCode);
         setRoomName(data.roomName);
@@ -248,9 +293,10 @@ export function useBingoGame(): UseBingoGameReturn {
         localStorage.setItem(SESSION_ID_KEY, data.sessionId);
         localStorage.setItem(ROOM_CODE_KEY, data.roomCode);
         localStorage.setItem(PLAYER_ID_KEY, data.playerId);
+        localStorage.setItem(ROOM_ID_KEY, data.roomId);
 
         // Subscribe to room
-        subscribeToRoom(data.roomCode);
+        subscribeToRoom(data.roomCode, data.roomId, data.playerId);
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -286,7 +332,6 @@ export function useBingoGame(): UseBingoGameReturn {
 
         setPlayerId(data.playerId);
         setPlayerName(name);
-        setSessionId(data.sessionId);
         setRoomId(data.roomId);
         setRoomCode(data.roomCode);
         setRoomName(data.roomName);
@@ -320,9 +365,10 @@ export function useBingoGame(): UseBingoGameReturn {
         localStorage.setItem(SESSION_ID_KEY, data.sessionId);
         localStorage.setItem(ROOM_CODE_KEY, data.roomCode);
         localStorage.setItem(PLAYER_ID_KEY, data.playerId);
+        localStorage.setItem(ROOM_ID_KEY, data.roomId);
 
         // Subscribe to room
-        subscribeToRoom(data.roomCode);
+        subscribeToRoom(data.roomCode, data.roomId, data.playerId);
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -357,9 +403,13 @@ export function useBingoGame(): UseBingoGameReturn {
       setCalledNumbers([]);
       setCurrentNumber(null);
 
-      // Start calling numbers as host (every 5-8 seconds)
+      // Start calling numbers as host
       if (isHost) {
-        const callNumber = async () => {
+        isCallingRef.current = true;
+
+        const callNextNumber = async () => {
+          if (!isCallingRef.current) return;
+
           try {
             const callRes = await fetch("/api/game/call-number", {
               method: "POST",
@@ -370,35 +420,30 @@ export function useBingoGame(): UseBingoGameReturn {
             if (!callRes.ok) {
               const errorData = await callRes.json();
               console.warn("[Call Number] Error:", errorData.error);
-              if (callingIntervalRef.current) {
-                clearInterval(callingIntervalRef.current);
-                callingIntervalRef.current = null;
+              // Don't stop calling on temporary errors
+              if (errorData.error?.includes("All numbers")) {
+                isCallingRef.current = false;
+                return;
               }
             }
           } catch (err) {
             console.error("[Call Number] Error:", err);
           }
+
+          // Schedule next call if still active
+          if (isCallingRef.current) {
+            const delay = Math.floor(Math.random() * 3000) + 5000; // 5-8 seconds
+            callingIntervalRef.current = setTimeout(callNextNumber, delay);
+          }
         };
 
-        // Random interval between 5-8 seconds
-        const getRandomInterval = () => Math.floor(Math.random() * 3000) + 5000;
-
-        const startCalling = () => {
-          callingIntervalRef.current = setTimeout(async () => {
-            await callNumber();
-            if (phase === "playing") {
-              startCalling();
-            }
-          }, getRandomInterval());
-        };
-
-        // Start first call after delay
-        startCalling();
+        // Start first call after initial delay
+        callingIntervalRef.current = setTimeout(callNextNumber, 3000);
       }
     } catch (err: any) {
       setError(err.message);
     }
-  }, [roomId, playerId, isHost, phase]);
+  }, [roomId, playerId, isHost]);
 
   const markNumber = useCallback(
     async (number: number) => {
@@ -486,7 +531,11 @@ export function useBingoGame(): UseBingoGameReturn {
 
       // Restart calling as host
       if (isHost) {
-        const callNumber = async () => {
+        isCallingRef.current = true;
+
+        const callNextNumber = async () => {
+          if (!isCallingRef.current) return;
+
           try {
             await fetch("/api/game/call-number", {
               method: "POST",
@@ -496,18 +545,14 @@ export function useBingoGame(): UseBingoGameReturn {
           } catch (err) {
             console.error("[Call Number] Error:", err);
           }
+
+          if (isCallingRef.current) {
+            const delay = Math.floor(Math.random() * 3000) + 5000;
+            callingIntervalRef.current = setTimeout(callNextNumber, delay);
+          }
         };
 
-        const getRandomInterval = () => Math.floor(Math.random() * 3000) + 5000;
-
-        const startCalling = () => {
-          callingIntervalRef.current = setTimeout(async () => {
-            await callNumber();
-            startCalling();
-          }, getRandomInterval());
-        };
-
-        startCalling();
+        callingIntervalRef.current = setTimeout(callNextNumber, 3000);
       }
     } catch (err: any) {
       setError(err.message);
@@ -515,9 +560,10 @@ export function useBingoGame(): UseBingoGameReturn {
   }, [roomId, playerId, isHost]);
 
   const leaveRoom = useCallback(() => {
-    // Stop calling interval
+    // Stop calling
+    isCallingRef.current = false;
     if (callingIntervalRef.current) {
-      clearInterval(callingIntervalRef.current);
+      clearTimeout(callingIntervalRef.current);
       callingIntervalRef.current = null;
     }
 
@@ -531,7 +577,6 @@ export function useBingoGame(): UseBingoGameReturn {
     // Clear all state
     setPlayerId(null);
     setPlayerName(null);
-    setSessionId(null);
     setIsHost(false);
     setRoomId(null);
     setRoomCode(null);
@@ -549,6 +594,7 @@ export function useBingoGame(): UseBingoGameReturn {
     localStorage.removeItem(SESSION_ID_KEY);
     localStorage.removeItem(ROOM_CODE_KEY);
     localStorage.removeItem(PLAYER_ID_KEY);
+    localStorage.removeItem(ROOM_ID_KEY);
   }, []);
 
   const clearError = useCallback(() => {
