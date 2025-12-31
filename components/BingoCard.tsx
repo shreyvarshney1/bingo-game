@@ -86,7 +86,7 @@ export function BingoCard() {
                         : cell.marked
                         ? "bg-gradient-to-br from-emerald-400 to-green-500 text-black shadow-lg shadow-emerald-500/30 scale-[0.92]"
                         : isJustCalled
-                        ? "bg-gradient-to-br from-pink-500 to-rose-500 text-white animate-pulse ring-2 ring-white/50"
+                        ? "bg-gradient-to-br from-pink-500 to-rose-500 text-white animate-pulse ring-2 ring-white/50 hover:scale-105 active:scale-95 cursor-pointer"
                         : isCalled
                         ? "bg-gradient-to-br from-purple-500 to-fuchsia-500 text-white hover:scale-105 active:scale-95 cursor-pointer"
                         : "bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 cursor-pointer"
