@@ -222,6 +222,13 @@ export function useBingoGame(): UseBingoGameReturn {
         setPhase("finished");
         setRoundNumber(data.roundNumber);
 
+        // Update the winner's win count in players array for leaderboard
+        setPlayers((prev) =>
+          prev.map((p) =>
+            p.id === data.winnerId ? { ...p, wins: p.wins + 1 } : p
+          )
+        );
+
         // Stop calling
         isCallingRef.current = false;
         if (callingIntervalRef.current) {
