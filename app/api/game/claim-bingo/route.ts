@@ -27,6 +27,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
+    // Prevent claiming on already finished game (prevents double-clicks)
+    if (room.game.status === "finished") {
+      return NextResponse.json(
+        { valid: false, error: "Game already has a winner" },
+        { status: 400 }
+      );
+    }
+
     // Get player and their card
     const player = await prisma.player.findUnique({
       where: { id: playerId },

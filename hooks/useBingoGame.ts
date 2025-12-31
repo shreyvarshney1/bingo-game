@@ -216,18 +216,24 @@ export function useBingoGame(): UseBingoGameReturn {
         setCalledNumbers(data.calledNumbers);
       });
 
-      channelRef.current.bind(EVENTS.WINNER_DECLARED, (data: any) => {
+      channelRef.current.bind(EVENTS.WINNER_DECLARED, async (data: any) => {
         console.log("[Pusher] Winner declared:", data);
         setWinner({ id: data.winnerId, name: data.winnerName });
         setPhase("finished");
         setRoundNumber(data.roundNumber);
 
-        // Update the winner's win count in players array for leaderboard
-        setPlayers((prev) =>
-          prev.map((p) =>
-            p.id === data.winnerId ? { ...p, wins: p.wins + 1 } : p
-          )
-        );
+        // Fetch updated player data to get accurate win counts from database
+        try {
+          const res = await fetch(
+            `/api/room/state?code=${code}&playerId=${currentPlayerId}`
+          );
+          const stateData = await res.json();
+          if (stateData.players) {
+            setPlayers(stateData.players);
+          }
+        } catch (err) {
+          console.error("[Fetch Players] Error:", err);
+        }
 
         // Stop calling
         isCallingRef.current = false;

@@ -39,12 +39,12 @@ a,
 input[type="submit"],
 input[type="button"],
 .cursor-pointer {
-  cursor: pointer;
+  cursor: pointer !important;
 }
 
 button:disabled,
 .cursor-not-allowed {
-  cursor: not-allowed;
+  cursor: not-allowed !important;
 }
 
 /* Custom scrollbar */
