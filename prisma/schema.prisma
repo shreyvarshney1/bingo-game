@@ -1,0 +1,55 @@
+// Prisma schema for TeamBingo
+// Database: PostgreSQL (Neon)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Room represents a Bingo game room/team
+model Room {
+  id        String   @id @default(cuid())
+  code      String   @unique  // 6-character invite code
+  name      String            // Room name set by host
+  hostId    String            // ID of the host player
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  players   Player[]
+  game      GameSession?
+}
+
+// Player tracks individual player stats within a room
+model Player {
+  id         String   @id @default(cuid())
+  name       String            // Display name
+  sessionId  String   @unique  // Browser session ID for reconnection
+  roomId     String
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  wins       Int      @default(0)  // Total wins in this room
+  isHost     Boolean  @default(false)
+  cardData   String?  // JSON encoded Bingo card
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([roomId])
+  @@index([sessionId])
+}
+
+// GameSession stores the current game state
+model GameSession {
+  id            String   @id @default(cuid())
+  roomId        String   @unique
+  room          Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  status        String   @default("waiting") // waiting, playing, finished
+  calledNumbers Int[]    // Array of called numbers
+  currentNumber Int?     // Last called number
+  winnerId      String?  // ID of winner
+  winnerName    String?  // Name of winner
+  roundNumber   Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
